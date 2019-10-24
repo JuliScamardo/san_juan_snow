@@ -1,8 +1,10 @@
 ---
 title: "Web Scraping"
-author: "Matthew Ross"
-date: "10/20/2019"
+author: "Juli Scamardo"
+date: "10/22/2019"
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
@@ -10,7 +12,9 @@ library(rvest)
 library(tidyverse)
 library(lubridate)
 library(readxl)
+library(pdftools)
 
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
 ```
 
 
@@ -56,6 +60,8 @@ links <- webpage %>%
 ### Download data in a for loop
 
 ```{r}
+# create data file
+#dir.create('data')
 
 #Grab only the name of the file by splitting out on forward slashes
 splits <- str_split_fixed(links,'/',8)
@@ -70,14 +76,22 @@ file_names <- paste0('data/',dataset)
 #   download.file(links[i],destfile=file_names[i])
 # }
 
+## only want to download data if it's not downloaded already
+# are they downloaded? 
+downloaded <- file.exists(file_names)
+
+# if all files are downloaded, this should be FALSE
+evaluate <- !all(downloaded)
+
 ```
 
 ### Download data in a map
 
 ```{r}
-
-#Map version of the same forloop (downloading 4 files)
-map2(links,file_names,download.file)
+#Map version of the same forloop (downloading 4 files) ONLY if data isn't already downloaded
+if(evaluate == T){
+  map2(links,file_names,download.file)
+} else{print('data already downloaded')}
 
 ```
 
@@ -91,13 +105,12 @@ snow_files <- file_names %>%
   .[!grepl('SG_24',.)] %>%
   .[!grepl('PTSP',.)]
 
-#empty_data <- list()
+empty_data <- list()
 
 # snow_data <- for(i in 1:length(snow_files)){
 #   empty_data[[i]] <- read_csv(snow_files[i]) %>%
 #     select(Year,DOY,Sno_Height_M)
-# }
-
+#  }
 
 #snow_data_full <- do.call('rbind',empty_data)
 
@@ -108,8 +121,6 @@ snow_files <- file_names %>%
 ### Read in the data as a map function
 
 ```{r}
-
-
 our_snow_reader <- function(file){
   name = str_split_fixed(file,'/',2)[,2] %>%
     gsub('_24hr.csv','',.)
@@ -135,6 +146,7 @@ snow_yearly <- snow_data_full %>%
 
 ggplot(snow_yearly,aes(x=Year,y=mean_height,color=site)) + 
   geom_point() +
+  geom_line() +
   ggthemes::theme_few() + 
   ggthemes::scale_color_few()
 ```
@@ -148,7 +160,11 @@ Here I want you to use the `rvest` package to get the URLs for
 the `SASP forcing` and `SBSP_forcing` meteoroligical datasets.
 
 ```{r}
-
+## grabbing 2 weather forcing datasets (SASP and SBSP) from webpage
+m_links <- webpage %>%
+  html_nodes('a') %>%
+  .[grepl('forcing',.)] %>%
+  html_attr('href')
 ```
 
 ## Download the meteorological data
@@ -157,7 +173,24 @@ Here I want you to use the `download_file` and `str_split_fixed`
 commands to download the data ands save it in your data folder.
 You can use a for loop or a map function. 
 
+
 ```{r}
+#Grab only the name of the file 
+m_splits <- str_split_fixed(m_links,'/',5)
+
+#Keep only the 5th column, which is the name and extension
+m_dataset <- m_splits[,5] 
+
+#generate a file list for where the data goes
+m_names <- paste0('data/',m_dataset)
+
+#check to see if data is already downloaded
+met_downloaded <- file.exists(m_names)
+met_evaluate <- !all(met_downloaded)
+
+#download the 2 meteor files into data folder, if not already downloaded
+if(met_evaluate == T){map2(m_links,m_names,download.file)
+  }else{print('data already downloaded')}
 
 ```
 
@@ -167,6 +200,32 @@ Write a custom function to read in the data and append a site
 column to the data. 
 
 ```{r}
+# download pdf metadata
+pdf_url <- "https://snowstudies.org/data/Serially-Complete-Metadata-text08.pdf"
+
+# get names of columns from metadata
+headers <- pdf_text(pdf_url)%>%
+  read_lines() %>%
+  .[1:26] %>%
+  trimws() %>%
+  str_split_fixed(., "\\. ", 2) %>%
+  .[,2]
+
+# create function
+met_reader <- function(file){
+  site_name <- str_split_fixed(file, '-', 5)[,3]
+  
+  df <- read_delim(file, col_names = FALSE, delim = ' ', 
+                   col_types = cols(.default = "n"))
+  names(df) <- headers
+  
+  ## removing minutes and seconds because all zeros
+  d <- select(df, -c('minute','second')) %>%
+    mutate(site = site_name) %>%
+    select(25, 1:24)
+  
+  return(d)
+}
 
 ```
 
@@ -174,7 +233,10 @@ column to the data.
 Use the `map` function to read in both meteorological files.
 
 ```{r}
+## creating one file with meteorological data from both sites
+full_met <- map_dfr(m_names, met_reader)
 
+summary(full_met)
 ```
 
 
